@@ -1,0 +1,97 @@
+---
+
+- name: Update & Upgrade APT Packages
+  apt:
+    update_cache: yes
+    upgrade: yes
+    cache_valid_time: 86400 #One day
+  tags: loadbalancer
+
+- name: Download HAProxy apt key (haproxy.debian.net)
+  get_url:
+    url: https://haproxy.debian.net/haproxy-archive-keyring.gpg
+    dest: /etc/apt/keyrings/haproxy-archive-keyring.gpg
+    mode: '0644'
+  tags: loadbalancer
+
+- name: Add HAProxy repository
+  copy:
+    content: "deb [signed-by=/etc/apt/keyrings/haproxy-archive-keyring.gpg] https://haproxy.debian.net {{ ansible_distribution_release }}-backports-{{ haproxy_branch }} main\n"
+    dest: /etc/apt/sources.list.d/haproxy.list
+  tags: loadbalancer
+
+- name: Update APT cache
+  apt:
+    update_cache: yes
+  tags: loadbalancer
+
+# Debian 13 no longer reads /etc/sysctl.conf, only /etc/sysctl.d/
+- name: Add sysctl settings
+  lineinfile:
+    path: /etc/sysctl.d/99-loadbalancer.conf
+    line: "{{ item }}"
+    create: yes
+  loop:
+    - "net.ipv4.ip_nonlocal_bind=1"
+    - "net.ipv4.ip_forward=1"
+  tags: loadbalancer
+
+- name: Apply sysctl settings
+  command: sysctl --system
+  tags: loadbalancer
+
+- name: Install keepalived and haproxy
+  apt:
+    name:
+      - keepalived
+      - "haproxy={{ haproxy_branch }}.*"
+    state: present
+  tags: loadbalancer
+
+- name: Create check_apiserver.sh script
+  template:
+    src:  check_apiserver.sh.j2
+    dest: /etc/keepalived/check_apiserver.sh
+    mode: '0755'
+  tags: loadbalancer
+
+- name: Create keepalived.conf file
+  template:
+    src:  keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    mode: '644'
+  tags: loadbalancer
+
+- name: Enable and start keepalived service
+  service:
+    name: keepalived
+    state: started
+    enabled: yes
+  tags: loadbalancer
+
+- name: Configure haproxy
+  template:
+    src:  haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: '644'
+  tags: loadbalancer
+
+- name: Enable and restart haproxy service
+  service:
+    name: haproxy
+    state: restarted
+    enabled: yes
+  tags: loadbalancer
+
+- name: Disable swap
+  command: "{{ item }}"
+  loop:
+    - swapoff -a
+  tags: loadbalancer
+
+- name: disable SWAP in fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+    replace: '# \1'
+  tags: loadbalancer
